@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Images, Sparkles, LayoutDashboard, LogOut } from "lucide-react";
+import { Images, Sparkles, LayoutDashboard, LogOut, BookOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/gallery", label: "Gallery", icon: Images },
-  { href: "/dashboard/highlight", label: "Highlight", icon: Sparkles },
+  { href: "/dashboard/highlight", label: "Highlights", icon: Sparkles },
+  { href: "/dashboard/story", label: "Our Story", icon: BookOpen },
 ];
 
 export function AdminNav({ email }: { email: string }) {

@@ -3,9 +3,10 @@ import { HighlightManager } from "@/components/HighlightManager";
 export default function HighlightPage() {
   return (
     <div>
-      <h2 className="mb-2 text-2xl font-bold">Highlight</h2>
+      <h2 className="mb-2 text-2xl font-bold">Highlights</h2>
       <p className="mb-8 text-muted">
-        Controls the optional section above Our Story on the public homepage.
+        Text under the Highlights title, plus photos and videos in a slider above
+        Our Story.
       </p>
       <HighlightManager />
     </div>

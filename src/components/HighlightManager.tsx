@@ -1,46 +1,57 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Save, Trash2 } from "lucide-react";
+import { Save, Trash2, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { BUCKET, type MediaType, type SiteHighlight } from "@/lib/types";
+import {
+  BUCKET,
+  type HighlightItem,
+  type MediaType,
+  type SiteHighlight,
+} from "@/lib/types";
 
 function detectMediaType(file: File): MediaType {
   return file.type.startsWith("video/") ? "video" : "image";
 }
 
 export function HighlightManager() {
-  const [current, setCurrent] = useState<SiteHighlight | null>(null);
+  const [copy, setCopy] = useState<SiteHighlight | null>(null);
+  const [items, setItems] = useState<HighlightItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingText, setSavingText] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const [title, setTitle] = useState("");
   const [bodyText, setBodyText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [clearMedia, setClearMedia] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const { data, error: fetchError } = await supabase
-      .from("site_highlights")
-      .select("*")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const [{ data: copyRow, error: copyError }, { data: mediaRows, error: mediaError }] =
+      await Promise.all([
+        supabase
+          .from("site_highlights")
+          .select("*")
+          .eq("is_active", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("highlight_items")
+          .select("*")
+          .order("sort_order", { ascending: false })
+          .order("created_at", { ascending: false }),
+      ]);
 
-    if (fetchError) {
-      setError(fetchError.message);
+    if (copyError || mediaError) {
+      setError(copyError?.message || mediaError?.message || "Failed to load");
     } else {
-      const row = (data as SiteHighlight | null) ?? null;
-      setCurrent(row);
-      setTitle(row?.title ?? "");
+      const row = (copyRow as SiteHighlight | null) ?? null;
+      setCopy(row);
       setBodyText(row?.body_text ?? "");
-      setClearMedia(false);
-      setFile(null);
+      setItems((mediaRows as HighlightItem[]) ?? []);
       setError(null);
     }
     setLoading(false);
@@ -50,77 +61,28 @@ export function HighlightManager() {
     void load();
   }, [load]);
 
-  async function onSave(e: FormEvent) {
+  async function onSaveText(e: FormEvent) {
     e.preventDefault();
-    setSaving(true);
+    setSavingText(true);
     setError(null);
     setMessage(null);
 
     const supabase = createClient();
-    let mediaType: MediaType | null = current?.media_type ?? null;
-    let filePath: string | null = current?.file_path ?? null;
-    let publicUrl: string | null = current?.public_url ?? null;
-
-    if (clearMedia && !file) {
-      if (filePath) {
-        await supabase.storage.from(BUCKET).remove([filePath]);
-      }
-      mediaType = null;
-      filePath = null;
-      publicUrl = null;
-    }
-
-    if (file) {
-      if (filePath) {
-        await supabase.storage.from(BUCKET).remove([filePath]);
-      }
-      const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
-      const path = `highlight/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
-        });
-
-      if (uploadError) {
-        setSaving(false);
-        setError(uploadError.message);
-        return;
-      }
-
-      mediaType = detectMediaType(file);
-      filePath = path;
-      publicUrl = supabase.storage.from(BUCKET).getPublicUrl(path).data
-        .publicUrl;
-    }
-
     const payload = {
-      title: title.trim() || null,
+      title: "Highlights",
       body_text: bodyText.trim() || null,
-      media_type: mediaType,
-      file_path: filePath,
-      public_url: publicUrl,
       is_active: true,
       updated_at: new Date().toISOString(),
     };
 
-    if (!payload.title && !payload.body_text && !payload.public_url) {
-      setSaving(false);
-      setError("Add a title, text, or media before saving.");
-      return;
-    }
-
     let saveError = null;
-    if (current) {
+    if (copy) {
       const { error: updateError } = await supabase
         .from("site_highlights")
         .update(payload)
-        .eq("id", current.id);
+        .eq("id", copy.id);
       saveError = updateError;
     } else {
-      // Deactivate any previous actives, then insert
       await supabase
         .from("site_highlights")
         .update({ is_active: false })
@@ -131,44 +93,136 @@ export function HighlightManager() {
       saveError = insertError;
     }
 
-    setSaving(false);
-
+    setSavingText(false);
     if (saveError) {
       setError(saveError.message);
       return;
     }
 
-    setMessage("Highlight saved — it appears above Our Story on the public site.");
+    setMessage("Highlights text saved — it shows under the Highlights title.");
     await load();
   }
 
-  async function clearHighlight() {
-    if (!current) return;
-    if (!confirm("Remove the highlight from the public website?")) return;
+  async function clearText() {
+    if (!copy) {
+      setBodyText("");
+      return;
+    }
+    if (!confirm("Clear the Highlights text strip on the public site?")) return;
 
     const supabase = createClient();
-    if (current.file_path) {
-      await supabase.storage.from(BUCKET).remove([current.file_path]);
-    }
     const { error: updateError } = await supabase
       .from("site_highlights")
       .update({
-        is_active: false,
-        title: null,
         body_text: null,
-        media_type: null,
-        file_path: null,
-        public_url: null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", current.id);
+      .eq("id", copy.id);
 
     if (updateError) {
       setError(updateError.message);
       return;
     }
 
-    setMessage("Highlight cleared — section hidden on the public site.");
+    setBodyText("");
+    setMessage("Text cleared.");
+    await load();
+  }
+
+  async function onUpload(e: FormEvent) {
+    e.preventDefault();
+    if (files.length === 0) {
+      setError("Choose one or more photos or videos.");
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setMessage(null);
+
+    const supabase = createClient();
+    let uploaded = 0;
+
+    for (const [index, file] of files.entries()) {
+      const mediaType = detectMediaType(file);
+      const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+      const path = `highlight/${Date.now()}-${index}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: file.type || undefined,
+        });
+
+      if (uploadError) {
+        setUploading(false);
+        setError(uploadError.message);
+        return;
+      }
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from(BUCKET).getPublicUrl(path);
+
+      const { error: insertError } = await supabase.from("highlight_items").insert({
+        title: file.name.replace(/\.[^.]+$/, ""),
+        media_type: mediaType,
+        file_path: path,
+        public_url: publicUrl,
+        sort_order: items.length + index,
+        is_active: true,
+      });
+
+      if (insertError) {
+        setUploading(false);
+        setError(insertError.message);
+        return;
+      }
+      uploaded += 1;
+    }
+
+    setUploading(false);
+    setFiles([]);
+    setMessage(
+      uploaded === 1
+        ? "Uploaded 1 item — it will show in the Highlights slider."
+        : `Uploaded ${uploaded} items — they will show in the Highlights slider.`,
+    );
+    await load();
+  }
+
+  async function removeItem(item: HighlightItem) {
+    if (!confirm(`Delete “${item.title}”?`)) return;
+
+    const supabase = createClient();
+    await supabase.storage.from(BUCKET).remove([item.file_path]);
+    const { error: deleteError } = await supabase
+      .from("highlight_items")
+      .delete()
+      .eq("id", item.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setMessage("Deleted.");
+    await load();
+  }
+
+  async function toggleActive(item: HighlightItem) {
+    const supabase = createClient();
+    const { error: updateError } = await supabase
+      .from("highlight_items")
+      .update({ is_active: !item.is_active })
+      .eq("id", item.id);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
     await load();
   }
 
@@ -177,99 +231,70 @@ export function HighlightManager() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <form
-        onSubmit={onSave}
+        onSubmit={onSaveText}
         className="rounded-2xl border border-border bg-surface p-6"
       >
-        <h2 className="mb-1 text-lg font-semibold">Site highlight</h2>
+        <h2 className="mb-1 text-lg font-semibold">Highlights text</h2>
         <p className="mb-5 text-sm text-muted">
-          Shown above Our Story only when content exists. Leave empty / clear to
-          hide it.
+          The public heading is always “Highlights”. This text sits under that
+          title, above the photo/video slider.
         </p>
-
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm text-muted">Title</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Weekend special"
-              className="w-full rounded-xl border border-border bg-background px-4 py-3 outline-none ring-primary focus:ring-2"
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm text-muted">Text</label>
-            <textarea
-              value={bodyText}
-              onChange={(e) => setBodyText(e.target.value)}
-              rows={4}
-              placeholder="Short announcement for customers…"
-              className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 outline-none ring-primary focus:ring-2"
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm text-muted">
-              Photo or video (optional)
-            </label>
-            <input
-              type="file"
-              accept="image/*,video/*"
-              onChange={(e) => {
-                setFile(e.target.files?.[0] ?? null);
-                setClearMedia(false);
-              }}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
-            />
-            {current?.public_url && !clearMedia && !file && (
-              <div className="mt-3 overflow-hidden rounded-xl border border-border">
-                {current.media_type === "video" ? (
-                  <video
-                    src={current.public_url}
-                    controls
-                    className="max-h-56 w-full bg-black object-contain"
-                  />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={current.public_url}
-                    alt={current.title ?? "Highlight"}
-                    className="max-h-56 w-full object-cover"
-                  />
-                )}
-                <label className="flex items-center gap-2 border-t border-border px-3 py-2 text-sm text-muted">
-                  <input
-                    type="checkbox"
-                    checked={clearMedia}
-                    onChange={(e) => setClearMedia(e.target.checked)}
-                  />
-                  Remove current media on save
-                </label>
-              </div>
-            )}
-          </div>
-        </div>
-
+        <textarea
+          value={bodyText}
+          onChange={(e) => setBodyText(e.target.value)}
+          rows={4}
+          placeholder="Short announcement for customers…"
+          className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 outline-none ring-primary focus:ring-2"
+        />
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="submit"
-            disabled={saving}
+            disabled={savingText}
             className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
           >
             <Save className="h-4 w-4" />
-            {saving ? "Saving…" : "Save highlight"}
+            {savingText ? "Saving…" : "Save text"}
           </button>
-          {current && (
-            <button
-              type="button"
-              onClick={() => void clearHighlight()}
-              className="inline-flex items-center gap-2 rounded-xl border border-danger/40 px-5 py-3 text-danger hover:bg-danger/10"
-            >
-              <Trash2 className="h-4 w-4" />
-              Clear highlight
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void clearText()}
+            className="inline-flex items-center gap-2 rounded-xl border border-danger/40 px-5 py-3 text-danger hover:bg-danger/10"
+          >
+            <Trash2 className="h-4 w-4" />
+            Clear text
+          </button>
         </div>
+      </form>
+
+      <form
+        onSubmit={onUpload}
+        className="rounded-2xl border border-border bg-surface p-6"
+      >
+        <h2 className="mb-1 text-lg font-semibold">Highlight photos & videos</h2>
+        <p className="mb-5 text-sm text-muted">
+          Add multiple files at once. They appear in a left/right slider — text
+          is not part of the slider.
+        </p>
+        <input
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
+        />
+        {files.length > 0 && (
+          <p className="mt-2 text-sm text-muted">{files.length} file(s) selected</p>
+        )}
+        <button
+          type="submit"
+          disabled={uploading}
+          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+        >
+          <Upload className="h-4 w-4" />
+          {uploading ? "Uploading…" : "Upload"}
+        </button>
       </form>
 
       {error && (
@@ -282,6 +307,66 @@ export function HighlightManager() {
           {message}
         </p>
       )}
+
+      <section>
+        <h2 className="mb-4 text-lg font-semibold">
+          Slider items ({items.length})
+        </h2>
+        {items.length === 0 ? (
+          <p className="text-muted">No photos or videos yet.</p>
+        ) : (
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map((item) => (
+              <li
+                key={item.id}
+                className="overflow-hidden rounded-xl border border-border bg-surface"
+              >
+                <div className="aspect-[4/3] bg-black">
+                  {item.media_type === "video" ? (
+                    <video
+                      src={item.public_url}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.public_url}
+                      alt={item.title}
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+                </div>
+                <div className="space-y-2 p-3">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="text-xs text-muted">
+                    {item.media_type} · {item.is_active ? "live" : "hidden"}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void toggleActive(item)}
+                      className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-background"
+                    >
+                      {item.is_active ? "Hide" : "Show"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeItem(item)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger hover:bg-danger/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

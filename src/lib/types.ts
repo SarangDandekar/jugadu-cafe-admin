@@ -25,6 +25,27 @@ export type SiteHighlight = {
   updated_at: string;
 };
 
+export type HighlightItem = {
+  id: string;
+  title: string;
+  media_type: MediaType;
+  file_path: string;
+  public_url: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type SiteStoryMedia = {
+  id: string;
+  media_type: MediaType;
+  file_path: string;
+  public_url: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export const GALLERY_CATEGORIES: { id: GalleryCategory; label: string }[] = [
   { id: "food", label: "Food" },
   { id: "interior", label: "Store" },
