@@ -10,6 +10,7 @@ import {
   type GalleryItem,
   type MediaType,
 } from "@/lib/types";
+import { formatBytes, uploadCafeMedia } from "@/lib/uploadMedia";
 
 function detectMediaType(file: File): MediaType {
   return file.type.startsWith("video/") ? "video" : "image";
@@ -19,6 +20,7 @@ export function GalleryManager() {
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,46 +60,43 @@ export function GalleryManager() {
     setUploading(true);
     setError(null);
     setMessage(null);
+    setProgress(`Uploading ${file.name} (${formatBytes(file.size)})…`);
 
     const supabase = createClient();
     const mediaType = detectMediaType(file);
     const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
     const path = `gallery/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET)
-      .upload(path, file, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType: file.type || undefined,
+    try {
+      const publicUrl = await uploadCafeMedia(supabase, path, file, (pct) => {
+        setProgress(`Uploading ${file.name} — ${pct}%`);
       });
 
-    if (uploadError) {
+      const { error: insertError } = await supabase.from("gallery_items").insert({
+        title: title.trim() || file.name,
+        media_type: mediaType,
+        category: mediaType === "video" ? "videos" : category,
+        file_path: path,
+        public_url: publicUrl,
+        sort_order: items.length,
+        is_active: true,
+      });
+
+      if (insertError) {
+        setError(insertError.message);
+        setUploading(false);
+        setProgress(null);
+        return;
+      }
+    } catch (err) {
       setUploading(false);
-      setError(uploadError.message);
+      setProgress(null);
+      setError(err instanceof Error ? err.message : "Upload failed.");
       return;
     }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from(BUCKET).getPublicUrl(path);
-
-    const { error: insertError } = await supabase.from("gallery_items").insert({
-      title: title.trim() || file.name,
-      media_type: mediaType,
-      category: mediaType === "video" ? "videos" : category,
-      file_path: path,
-      public_url: publicUrl,
-      sort_order: items.length,
-      is_active: true,
-    });
 
     setUploading(false);
-
-    if (insertError) {
-      setError(insertError.message);
-      return;
-    }
+    setProgress(null);
 
     setTitle("");
     setFile(null);
@@ -192,6 +191,7 @@ export function GalleryManager() {
           <Upload className="h-4 w-4" />
           {uploading ? "Uploading…" : "Upload"}
         </button>
+        {progress && <p className="mt-3 text-sm text-muted">{progress}</p>}
       </form>
 
       {error && (

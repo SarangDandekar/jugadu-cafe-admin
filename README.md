@@ -8,6 +8,7 @@ Separate admin website for managing **Gallery** uploads and the homepage **Highl
    - `supabase/migrations/003_gallery_and_highlight.sql`
    - `supabase/migrations/004_highlight_items_and_story.sql`
    - `supabase/migrations/005_page_views.sql`
+   - `supabase/migrations/006_storage_large_videos.sql`
 2. In Supabase → **Authentication → Users**, create an admin user (email + password).
 3. Copy `.env.example` → `.env.local` and set the same `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` as the public site.
 4. Install & run:

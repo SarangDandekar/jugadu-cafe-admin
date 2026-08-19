@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Save, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BUCKET, type MediaType, type SiteStoryMedia } from "@/lib/types";
+import { formatBytes, uploadCafeMedia } from "@/lib/uploadMedia";
 
 function detectMediaType(file: File): MediaType {
   return file.type.startsWith("video/") ? "video" : "image";
@@ -13,6 +14,7 @@ export function StoryManager() {
   const [current, setCurrent] = useState<SiteStoryMedia | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -52,26 +54,24 @@ export function StoryManager() {
     setSaving(true);
     setError(null);
     setMessage(null);
+    setProgress(`Uploading ${file.name} (${formatBytes(file.size)})…`);
 
     const supabase = createClient();
     const mediaType = detectMediaType(file);
     const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
     const path = `story/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
-    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {
-      cacheControl: "3600",
-      upsert: false,
-      contentType: file.type || undefined,
-    });
-
-    if (uploadError) {
+    let publicUrl: string;
+    try {
+      publicUrl = await uploadCafeMedia(supabase, path, file, (pct) => {
+        setProgress(`Uploading ${file.name} — ${pct}%`);
+      });
+    } catch (err) {
       setSaving(false);
-      setError(uploadError.message);
+      setProgress(null);
+      setError(err instanceof Error ? err.message : "Upload failed.");
       return;
     }
-
-    const publicUrl = supabase.storage.from(BUCKET).getPublicUrl(path).data
-      .publicUrl;
 
     const payload = {
       media_type: mediaType,
@@ -104,6 +104,7 @@ export function StoryManager() {
     }
 
     setSaving(false);
+    setProgress(null);
     if (saveError) {
       setError(saveError.message);
       return;
@@ -203,6 +204,7 @@ export function StoryManager() {
             </button>
           )}
         </div>
+        {progress && <p className="mt-3 text-sm text-muted">{progress}</p>}
       </form>
 
       {error && (

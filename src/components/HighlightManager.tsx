@@ -9,6 +9,7 @@ import {
   type MediaType,
   type SiteHighlight,
 } from "@/lib/types";
+import { formatBytes, uploadCafeMedia } from "@/lib/uploadMedia";
 
 function detectMediaType(file: File): MediaType {
   return file.type.startsWith("video/") ? "video" : "image";
@@ -20,6 +21,7 @@ export function HighlightManager() {
   const [loading, setLoading] = useState(true);
   const [savingText, setSavingText] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -139,6 +141,7 @@ export function HighlightManager() {
     setUploading(true);
     setError(null);
     setMessage(null);
+    setProgress(null);
 
     const supabase = createClient();
     let uploaded = 0;
@@ -148,42 +151,43 @@ export function HighlightManager() {
       const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
       const path = `highlight/${Date.now()}-${index}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: file.type || undefined,
+      try {
+        setProgress(
+          `Uploading ${index + 1}/${files.length}: ${file.name} (${formatBytes(file.size)})`,
+        );
+        const publicUrl = await uploadCafeMedia(supabase, path, file, (pct) => {
+          setProgress(
+            `Uploading ${index + 1}/${files.length}: ${file.name} — ${pct}%`,
+          );
         });
 
-      if (uploadError) {
+        const { error: insertError } = await supabase.from("highlight_items").insert({
+          title: file.name.replace(/\.[^.]+$/, ""),
+          media_type: mediaType,
+          file_path: path,
+          public_url: publicUrl,
+          sort_order: items.length + index,
+          is_active: true,
+        });
+
+        if (insertError) {
+          setUploading(false);
+          setProgress(null);
+          setError(insertError.message);
+          return;
+        }
+      } catch (err) {
         setUploading(false);
-        setError(uploadError.message);
+        setProgress(null);
+        setError(err instanceof Error ? err.message : "Upload failed.");
         return;
       }
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from(BUCKET).getPublicUrl(path);
-
-      const { error: insertError } = await supabase.from("highlight_items").insert({
-        title: file.name.replace(/\.[^.]+$/, ""),
-        media_type: mediaType,
-        file_path: path,
-        public_url: publicUrl,
-        sort_order: items.length + index,
-        is_active: true,
-      });
-
-      if (insertError) {
-        setUploading(false);
-        setError(insertError.message);
-        return;
-      }
       uploaded += 1;
     }
 
     setUploading(false);
+    setProgress(null);
     setFiles([]);
     setMessage(
       uploaded === 1
@@ -295,6 +299,7 @@ export function HighlightManager() {
           <Upload className="h-4 w-4" />
           {uploading ? "Uploading…" : "Upload"}
         </button>
+        {progress && <p className="mt-3 text-sm text-muted">{progress}</p>}
       </form>
 
       {error && (
